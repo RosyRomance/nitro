@@ -39,6 +39,7 @@ import (
 	executionrpcserver "github.com/offchainlabs/nitro/execution/rpcserver"
 	"github.com/offchainlabs/nitro/gethhook"
 	"github.com/offchainlabs/nitro/solgen/go/precompilesgen"
+	"github.com/offchainlabs/nitro/statefeed"
 	"github.com/offchainlabs/nitro/timeboost"
 	"github.com/offchainlabs/nitro/transactionfeed"
 	"github.com/offchainlabs/nitro/util"
@@ -162,6 +163,7 @@ type Config struct {
 	DisableArbOwnerEthCall      bool                         `koanf:"disable-arbowner-ethcall"`
 	LegacyZeroBaseFeeUntil      uint64                       `koanf:"legacy-zero-base-fee-until"`
 	TransactionFeed             transactionfeed.ServerConfig `koanf:"transaction-feed"`
+	StateFeed                   statefeed.Config             `koanf:"state-feed"`
 
 	forwardingTarget string
 }
@@ -199,6 +201,12 @@ func (c *Config) Validate() error {
 	if err := c.ConsensusRPCClient.Validate(); err != nil {
 		return fmt.Errorf("error validating ConsensusRPCClient config: %w", err)
 	}
+	if err := c.StateFeed.Validate(); err != nil {
+		return err
+	}
+	if c.StateFeed.Enable && c.VmTrace.TracerName != "" {
+		return errors.New("state feed and VM tracing cannot be enabled together")
+	}
 	if err := c.TransactionFeed.Validate(); err != nil {
 		return err
 	}
@@ -226,6 +234,7 @@ func ConfigAddOptions(prefix string, f *pflag.FlagSet) {
 	f.Bool(prefix+".disable-arbowner-ethcall", ConfigDefault.DisableArbOwnerEthCall, "disable ArbOwner precompile calls outside on-chain execution (ethcall, gas estimation)")
 	f.Uint64(prefix+".legacy-zero-base-fee-until", ConfigDefault.LegacyZeroBaseFeeUntil, "orbit-chain compat: re-enables the pre-v3.7 behavior of treating ArbOS<=40 blocks with zero base fee as non-arbitrum, for blocks with unix timestamp strictly less than this value (0 disables; set to a timestamp past the last zero-basefee block on the chain)")
 	transactionfeed.ServerConfigAddOptions(prefix+".transaction-feed", f)
+	statefeed.AddOptions(prefix+".state-feed", f)
 	LiveTracingConfigAddOptions(prefix+".vmtrace", f)
 	rpcserver.ConfigAddOptions(prefix+".rpc-server", "execution", f)
 	rpcclient.RPCClientAddOptions(prefix+".consensus-rpc-client", f, &ConfigDefault.ConsensusRPCClient)
@@ -270,6 +279,7 @@ var ConfigDefault = Config{
 	LegacyZeroBaseFeeUntil:      0,
 
 	TransactionFeed: transactionfeed.DefaultServerConfig,
+	StateFeed:       statefeed.DefaultConfig,
 
 	RPCServer: rpcserver.DefaultConfig,
 	ConsensusRPCClient: rpcclient.ClientConfig{

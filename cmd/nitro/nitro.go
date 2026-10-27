@@ -60,6 +60,7 @@ import (
 	"github.com/offchainlabs/nitro/solgen/go/rollupgen"
 	legacystaker "github.com/offchainlabs/nitro/staker/legacy"
 	"github.com/offchainlabs/nitro/staker/validatorwallet"
+	"github.com/offchainlabs/nitro/statefeed"
 	nitroutil "github.com/offchainlabs/nitro/util"
 	"github.com/offchainlabs/nitro/util/containers"
 	"github.com/offchainlabs/nitro/util/headerreader"
@@ -438,6 +439,20 @@ func mainImpl() int {
 		log.Info("enabling custom tracer", "name", traceConfig.TracerName)
 	}
 
+	var stateFeed *statefeed.Server
+	if nodeConfig.Execution.StateFeed.Enable {
+		if tracer != nil || (nodeConfig.Node.ExecutionRPCClient.URL != "" && nodeConfig.Node.ExecutionRPCClient.URL != "self" && nodeConfig.Node.ExecutionRPCClient.URL != "self-auth") {
+			log.Error("state feed requires local execution without a VM tracer")
+			return 1
+		}
+		stateFeed, err = statefeed.New(nodeConfig.Execution.StateFeed)
+		if err != nil {
+			log.Error("state feed configuration", "err", err)
+			return 1
+		}
+		tracer = stateFeed.Hooks()
+	}
+
 	if err := gethexec.PopulateStylusTargetCache(&nodeConfig.Execution.StylusTarget); err != nil {
 		log.Error("error populating stylus target cache", "err", err)
 		return 1
@@ -563,6 +578,15 @@ func mainImpl() int {
 			log.Error("failed to create execution node", "err", err)
 			return 1
 		}
+	}
+	if stateFeed != nil {
+		stateFeed.Attach(l2BlockChain, l2BlockChain.CurrentBlock(), l2BlockChain.Config().ChainID)
+		execNode.ExecEngine.SetStateFeed(stateFeed)
+		if err := stateFeed.Start(); err != nil {
+			log.Error("starting state feed", "err", err)
+			return 1
+		}
+		deferFuncs = append(deferFuncs, stateFeed.Close)
 	}
 	consensusNode, err = arbnode.CreateConsensusNode(
 		ctx,

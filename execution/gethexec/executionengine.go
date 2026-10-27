@@ -56,6 +56,7 @@ import (
 	"github.com/offchainlabs/nitro/execution"
 	"github.com/offchainlabs/nitro/execution/gethexec/addressfilter"
 	"github.com/offchainlabs/nitro/execution/gethexec/eventfilter"
+	"github.com/offchainlabs/nitro/statefeed"
 	"github.com/offchainlabs/nitro/transactionfeed"
 	"github.com/offchainlabs/nitro/util/arbmath"
 	"github.com/offchainlabs/nitro/util/containers"
@@ -299,6 +300,7 @@ type FilteredTxWaitState struct {
 }
 
 type ExecutionEngine struct {
+	stateFeed *statefeed.Server
 	stopwaiter.StopWaiter
 
 	bc          *core.BlockChain
@@ -490,6 +492,14 @@ func (s *ExecutionEngine) SetTipRecorder(recorder *ChainTipBlockRecorder) {
 	s.tipRecorder = recorder
 }
 
+// SetStateFeed must be called before execution starts.
+func (s *ExecutionEngine) SetStateFeed(feed *statefeed.Server) {
+	if s.Started() {
+		panic("trying to set state feed after start")
+	}
+	s.stateFeed = feed
+}
+
 func (s *ExecutionEngine) SetReorgEventsNotifier(reorgEventsNotifier chan struct{}) {
 	if s.Started() {
 		panic("trying to set reorg events notifier after start")
@@ -618,6 +628,9 @@ func (s *ExecutionEngine) Reorg(msgIdxOfFirstMsgToAdd arbutil.MessageIndex, newM
 	err := s.bc.ReorgToOldBlock(lastBlockToKeep)
 	if err != nil {
 		return nil, err
+	}
+	if s.stateFeed != nil {
+		s.stateFeed.Reset(lastBlockToKeep.Header())
 	}
 
 	if s.reorgEventsNotifier != nil {
@@ -1377,7 +1390,11 @@ func (s *ExecutionEngine) appendBlock(block *types.Block, statedb *state.StateDB
 		logs = append(logs, receipt.Logs...)
 	}
 	startTime := time.Now()
-	if s.bc.GetVMConfig().Tracer != nil {
+	if s.stateFeed != nil {
+		h := block.Header()
+		s.stateFeed.Begin(h, s.bc.Config().IsCancun(h.Number, h.Time, types.DeserializeHeaderExtraInformation(h).ArbOSFormatVersion))
+	}
+	if s.bc.GetVMConfig().Tracer != nil && (s.stateFeed == nil || !s.stateFeed.IsCommitOnly(s.bc.GetVMConfig().Tracer)) {
 		// InsertChain is basically WriteBlockAndSetHeadWithTime along with recomputing
 		// the entire block which is also traced which works directly for live-tracing
 		if _, err := s.bc.InsertChain([]*types.Block{block}); err != nil {
@@ -1391,6 +1408,9 @@ func (s *ExecutionEngine) appendBlock(block *types.Block, statedb *state.StateDB
 		if status == core.SideStatTy { // TODO: This check can be removed as this WriteStatus is never returned when setting head
 			return errors.New("geth rejected block as non-canonical")
 		}
+	}
+	if s.stateFeed != nil {
+		s.stateFeed.Publish(block.Header())
 	}
 	blockWriteToDbTimer.Update(time.Since(startTime).Nanoseconds())
 	baseFeeGauge.Update(block.BaseFee().Int64())
