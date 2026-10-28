@@ -12,6 +12,7 @@ import (
 	"math/big"
 	"net"
 	"net/http"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
@@ -193,10 +194,22 @@ func (s *Server) capture(u *tracing.StateUpdate) {
 		}
 		get(a).Code = &code
 	}
-	// Stable ordering makes captures reproducible.
-	for _, a := range s.sub.Accounts {
-		if out := touched[a.Address]; out != nil {
+	// Stable ordering makes captures reproducible. Most blocks touch only a
+	// small fraction of the subscription, so avoid scanning every watched
+	// account solely to order the few changes.
+	e.Accounts = make([]Account, 0, len(touched))
+	if len(touched)*16 < len(s.sub.Accounts) {
+		for _, out := range touched {
 			e.Accounts = append(e.Accounts, *out)
+		}
+		slices.SortFunc(e.Accounts, func(a, b Account) int { return a.Address.Cmp(b.Address) })
+	} else {
+		// Dense blocks are cheaper to order with the already-sorted
+		// subscription than with O(changes * log(changes)) comparisons.
+		for _, a := range s.sub.Accounts {
+			if out := touched[a.Address]; out != nil {
+				e.Accounts = append(e.Accounts, *out)
+			}
 		}
 	}
 	if s.head == nil || u.OriginRoot != s.head.Root {

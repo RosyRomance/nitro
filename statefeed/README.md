@@ -88,3 +88,11 @@ encodings, bounded replay and reorg resets. Set `STATEFEED_FIXTURE_OUT` during t
 explicit-zero test to regenerate the Go JSON fixture used by flashloan's Rust
 receiver tests. The full Nitro command must also compile with generated contract
 bindings and the normal native dependencies.
+
+## Performance
+
+See [PERFORMANCE.md](PERFORMANCE.md) for the measured export costs, bounded
+ordering optimization, reproducible microbenchmarks and remaining pipeline work.
+As of the 2026-10-28 audit, the sparse ordering change has passed package tests but
+has not been deployed to the running node; the documented live HTTP samples and
+local before/after microbenchmarks have separate measurement boundaries.
